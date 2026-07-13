@@ -61,5 +61,39 @@ void
 memdump(char *fmt, char *data)
 {
   // Your code here.
+  int i;
 
+  for(i = 0; fmt[i] != '\0'; i++){
+    switch(fmt[i]){
+
+    case 'i':
+      printf("%d\n", *(int *)data);
+      data += 4;
+      break;
+
+    case 'p':
+      printf("%lx\n", *(uint64 *)data);
+      data += 8;
+      break;
+
+    case 'h':
+      printf("%d\n", *(short *)data);
+      data += 2;
+      break;
+
+    case 'c':
+      printf("%c\n", *data);
+      data += 1;
+      break;
+
+    case 's':
+      printf("%s\n", *(char **)data);
+      data += 8;
+      break;
+
+    case 'S':
+      printf("%s\n", data);
+      return;
+    }
+  }
 }
