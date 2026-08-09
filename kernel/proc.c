@@ -278,6 +278,10 @@ kfork(void)
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
+  
+  // copy the mask from the parent to the child process.
+  np->syscall_mask = p->syscall_mask;
+  safestrcpy(np->allowed_path, p->allowed_path, sizeof(p->allowed_path));
 
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)

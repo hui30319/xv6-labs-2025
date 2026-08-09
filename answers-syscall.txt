@@ -1,0 +1,137 @@
+# [xv6-labs-2025] Lab: system calls
+
+## Using gdb
+
+### Looking at the backtrace output, which function called syscall?
+
+GDB backtrace shows:
+
+```text
+(gdb) backtrace
+#0  syscall () at kernel/syscall.c:133
+#1  0x0000000080001a2c in usertrap () at kernel/trap.c:68
+#2  0x0000003ffffff09c in ?? ()
+```
+
+The function that called ```syscall()``` is ```usertrap()```.
+
+The call sequence is:
+```user program``` -> ```ecall``` -> ```usertrap()``` -> ```syscall()```.
+
+### What is the value of p->trapframe->a7 and what does that value represent?
+
+GDB shows:
+
+```text
+(gdb) p /x p->trapframe->a7
+$1 = 0xf
+```
+
+Therefore, ```p->trapframe->a7 = 0xf = 15```.
+
+In xv6, the ```a7``` register is used to pass the system call number to the kernel
+
+According to ```kernel/syscall.h```:
+
+```c
+#define SYS_open 15
+```
+Therefore, the value ```0xf``` represents ```SYS_open```.
+
+This makes sense because the first user program, ```user/init.c```, executes:
+
+```c
+if(open("console", O_RDWR) < 0){
+    ...
+}
+```
+
+The system call path is approximately:
+```user/init.c``` -> ```open("console", O_RDWR)``` -> ```user/usys.S``` -> ```li a7, SYS_open``` -> ```ecall``` -> ```usertrap()``` -> ```syscall()```.
+
+
+### What was the previous mode that the CPU was in?
+
+GDB shows:
+
+```text
+(gdb) p /x $sstatus
+$2 = 0x200000022
+```
+
+The relevant bit in ```sstatus``` is **SPP (Supervisor Previous Privilege)**, which is bit 8.
+
+> The **SPP** bit indicates the privilege level at which a hart was executing before entering supervisor mode. When a trap is taken, **SPP** is set to 0 if the trap originated from user mode, or 1 otherwise.
+
+For ```sstatus = 0x200000022```, bit 8 is ```0```, so ```SPP = 0```.
+
+Therefore, the previous privilege mode was **User mode**.
+
+This is expected because the ```ecall``` instruction was executed by the user program.
+
+### Write down the assembly instruction the kernel is panicing at. Which register corresponds to the variable num?
+
+The faulting instruction is:
+
+```asm
+0x80001c7e <syscall+16> lw      a3,0(zero) # 0x0
+```
+
+The instruction ```lw a3, 0(zero)``` loads a 32-bit value from memory address ```0x0``` into register ```a3```.
+
+Therefore, in this compiled code, the variable num is stored in register ```a3```.
+
+
+### Why does the kernel crash?
+
+The kernel panic output is:
+
+```shell
+xv6 kernel is booting
+
+scause=0xd sepc=0x80001c7e stval=0x0
+panic: kerneltrap
+```
+
+The modified code attempts to read from virtual address ```0x0```:
+
+```c
+num = *(int *)0;
+```
+
+This is compiled into:
+
+```asm
+lw a3,0(zero)
+```
+
+Address ```0x0``` is not mapped in the xv6 kernel's address space. Therefore, the memory access causes a page fault.
+
+The ```scause``` value is ```scause=0xd```:
+
+According to the RISC-V privileged specification, ```0xd``` means **Load page fault**.
+
+The ```sepc``` value is ```sepc=0x80001c7e```:
+
+This identifies the address of the instruction that caused the exception ```lw a3,0(zero)```.
+
+The ```stval``` value is ```stval=0x0```:
+
+For a load page fault, ```stval``` contains the virtual address that caused the fault. Therefore, ```stval=0x0``` confirms that the kernel attempted to access virtual address ```0x0```.
+
+Thus, the sequence is:
+```num = *(int *)0;``` -> ```lw a3, 0(zero)``` -> ```access virtual address 0x0``` -> ```address 0x0 is not mapped``` -> ```Load Page Fault``` -> ```scause = 0xd``` -> ```kerneltrap()``` -> ```panic: kerneltrap```. 
+
+### What is the name of the process that was running when the kernel paniced? What is its process id (pid)?
+
+GDB shows:
+
+```text
+(gdb) p p->name
+$1 = "init", '\000' <repeats 11 times>
+(gdb) p p->pid
+$2 = 1
+```
+
+Therefore, The process name was ```init```, and its process id was ```1```.
+
