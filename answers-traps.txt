@@ -1,0 +1,166 @@
+# [xv6-labs-2025] Lab: traps
+
+## RISC-V assembly
+
+### Which registers contain arguments to functions? For example, which register holds 13 in main's call to printf?
+
+```c
+#include "kernel/param.h"
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+
+int g(int x) {
+  return x+3;
+}
+
+int f(int x) {
+  return g(x);
+}
+
+void main(void) {
+  printf("%d %d\n", f(8)+1, 13);
+  exit(0);
+}
+```
+
+```asm
+0000000000000000 <g>:
+#include "kernel/param.h"
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+
+int g(int x) {
+   0:   1141                    addi    sp,sp,-16
+   2:   e422                    sd      s0,8(sp)
+   4:   0800                    addi    s0,sp,16
+  return x+3;
+}
+   6:   250d                    addiw   a0,a0,3
+   8:   6422                    ld      s0,8(sp)
+   a:   0141                    addi    sp,sp,16
+   c:   8082                    ret
+
+000000000000000e <f>:
+
+int f(int x) {
+   e:   1141                    addi    sp,sp,-16
+  10:   e422                    sd      s0,8(sp)
+  12:   0800                    addi    s0,sp,16
+  return g(x);
+}
+  14:   250d                    addiw   a0,a0,3
+  16:   6422                    ld      s0,8(sp)
+  18:   0141                    addi    sp,sp,16
+  1a:   8082                    ret
+
+000000000000001c <main>:
+
+void main(void) {
+  1c:   1141                    addi    sp,sp,-16
+  1e:   e406                    sd      ra,8(sp)
+  20:   e022                    sd      s0,0(sp)
+  22:   0800                    addi    s0,sp,16
+  printf("%d %d\n", f(8)+1, 13);
+  24:   4635                    li      a2,13
+  26:   45b1                    li      a1,12
+  28:   00001517                auipc   a0,0x1
+  2c:   85850513                addi    a0,a0,-1960 # 880 <malloc+0xe2>
+  30:   6ba000ef                jal     ra,6ea <printf>
+  exit(0);
+  34:   4501                    li      a0,0
+  36:   298000ef                jal     ra,2ce <exit>
+```
+
+In RISC-V, function arguments are passed in registers `a0` to `a7`.
+
+```c
+printf("%d %d\n", f(8)+1, 13);
+```
+
+The arguments are:
+
+`a0 = "%d %d\n"`
+`a1 = 12`
+`a2 = 13`
+
+Therefore, `13` is stored in `a2`.
+
+### Where is the call to function f in the assembly code for main? Where is the call to g? 
+
+There is no call to `f` in `main`. The compiler inlined `f` and computed `f(8)+1` as `12` at compile time.
+
+There is also no call to `g`. The compile inlined `g` into `f`.
+
+These can be seen from:
+
+```asm
+  24:   4635                    li      a2,13
+  26:   45b1                    li      a1,12
+```
+
+The compiler directly loads `12` into `a1` instead of calling `f(8)`.
+
+### At what address is the function printf located?
+
+The assembly contains:
+
+```asm
+  30:   6ba000ef                jal     ra,6ea <printf>
+```
+
+Therefore, `printf` is located at `0x6ea`.
+
+### What value is in the register ra just after the jalr to printf in main?
+
+In the assembly, the call is shown as `jal` rather than `jalr`:
+
+```asm
+  30:   6ba000ef                jal     ra,6ea <printf>
+  exit(0);
+  34:   4501                    li      a0,0
+```
+
+`jal` stores the address of the next instruction in `ra`.
+
+Therefore, `ra = 0x34`.
+
+### Run the following code. What is the output? The output depends on that fact that the RISC-V is little-endian. If the RISC-V were instead big-endian what would you set `i` to in order to yield the same output? Would you need to change `57616` to a different value?
+
+```c
+    unsigned int i = 0x00646c72;
+    printf("H%x Wo%s", 57616, (char *) &i);
+```
+
+Since RISC-V is little-endian, `i = 0x00646c72` the bytes are stored in memory in the following order `72` `6c` `64` `00`.
+
+These bytes correspond to:
+`0x72 = 'r'`
+`0x6c = 'l'`
+`0x64 = 'd'`
+`0x00 = 'NUL'`
+
+Therefore, `(char *)&i` is interpreted as the string `"rld"`.
+
+Also, `57616 = 0xe110`.
+
+Therefore, the output is: `HE110 World`.
+
+If RISC-V were big-endian, we would set `i = 0x726c6400`, so that the bytes in memory would still be `72` `6c` `64` `00`.
+
+We would not need to change `57616`, because the integer value itself is not affected by the byte order when it is passed to `%x`.
+
+### In the following code, what is going to be printed after ``'y='``? Why does this happen?
+
+```c
+printf("x=%d y=%d", 3);
+```
+
+The arguments passed to `printf` are:
+`a0 = "x=%d y=%d"`
+`a1 = 3`
+`a2 = ?`
+
+Since no valid second argument was supplied, `y` is not a specific value. This results in undefined behavior.
+
