@@ -105,7 +105,23 @@ e1000_transmit(char *buf, int len)
   // so that the caller knows to free buf.
   //
 
-  
+  acquire(&e1000_lock);
+
+  int i = regs[E1000_TDT];
+  if(!(tx_ring[i].status & E1000_TXD_STAT_DD)){
+    release(&e1000_lock);
+    return -1;
+  }
+  if(tx_ring[i].addr){
+    kfree((void*)tx_ring[i].addr);
+  }
+
+  tx_ring[i].addr = (uint64)buf;
+  tx_ring[i].length = len;
+  tx_ring[i].cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS;
+  regs[E1000_TDT] = (i + 1) % TX_RING_SIZE;
+
+  release(&e1000_lock);
   return 0;
 }
 
@@ -119,6 +135,20 @@ e1000_recv(void)
   // Create and deliver a buf for each packet (using net_rx()).
   //
 
+  while(1){
+    int i = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+
+    if (!(rx_ring[i].status & E1000_RXD_STAT_DD))
+      break;
+
+    net_rx((char*)rx_ring[i].addr, rx_ring[i].length);
+
+    rx_ring[i].addr = (uint64) kalloc();
+    if (!rx_ring[i].addr)
+      panic("e1000");
+    rx_ring[i].status = 0;
+    regs[E1000_RDT] = i;
+  }
 }
 
 void

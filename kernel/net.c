@@ -19,10 +19,35 @@ static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
 
 static struct spinlock netlock;
 
+struct packet {
+  char *buf;
+  int len;
+};
+
+struct port {
+  short port;
+
+  int head;
+  int tail;
+  int count;
+  struct packet queue[16];
+  struct spinlock lock;
+};
+
+#define NPORT 16
+static struct port ports[NPORT];
+
 void
 netinit(void)
 {
   initlock(&netlock, "netlock");
+  for(int i = 0; i < NPORT; i++){
+    initlock(&ports[i].lock, "port");
+    ports[i].port = 0;
+    ports[i].head = 0;
+    ports[i].tail = 0;
+    ports[i].count = 0;
+  }
 }
 
 
@@ -38,6 +63,22 @@ sys_bind(void)
   // Your code here.
   //
 
+  int port;
+
+  argint(0, &port);
+
+  acquire(&netlock);
+  for(int i = 0; i < NPORT; ++i){
+    if(ports[i].port != 0)
+      continue;
+
+    ports[i].port = port;
+
+    release(&netlock);
+    return 0;
+  }
+
+  release(&netlock);
   return -1;
 }
 
@@ -77,7 +118,80 @@ sys_recv(void)
   //
   // Your code here.
   //
-  return -1;
+
+  struct proc *p = myproc();
+  int dport;
+  uint64 srcaddr;
+  uint64 sportaddr;
+  uint64 bufaddr;
+  int maxlen;
+
+  argint(0, &dport);
+  argaddr(1, &srcaddr);
+  argaddr(2, &sportaddr);
+  argaddr(3, &bufaddr);
+  argint(4, &maxlen);
+
+  acquire(&netlock);
+
+  int idx = -1;
+  for(int i = 0; i < NPORT; i++){
+    if(ports[i].port == dport){
+      idx = i;
+      break;
+    }
+  }
+
+  release(&netlock);
+
+  if(idx == -1)
+    return -1;
+
+  acquire(&ports[idx].lock);
+
+  while(ports[idx].count == 0){
+    sleep(&ports[idx], &ports[idx].lock);
+  }
+
+  struct packet pkt = ports[idx].queue[ports[idx].head];
+  ports[idx].head = (ports[idx].head + 1) % 16;
+  ports[idx].count--;
+
+  release(&ports[idx].lock);
+
+  struct eth *eth = (struct eth *)pkt.buf;
+  struct ip *ip = (struct ip *)(eth + 1);
+  struct udp *udp = (struct udp *)(ip + 1);
+
+  uint32 src = ntohl(ip->ip_src);
+  uint16 sport = ntohs(udp->sport);
+
+  char *payload = (char *)(udp + 1);
+
+  int payload_len = ntohs(udp->ulen) - sizeof(struct udp);
+
+  int n = payload_len;
+  if(n > maxlen)
+    n = maxlen;
+
+  if(copyout(p->pagetable, srcaddr, (char *)&src, sizeof(src)) < 0){
+    kfree(pkt.buf);
+    return -1;
+  }
+
+  if(copyout(p->pagetable, sportaddr, (char *)&sport, sizeof(sport)) < 0){
+    kfree(pkt.buf);
+    return -1;
+  }
+
+  if(copyout(p->pagetable, bufaddr, payload, n) < 0){
+    kfree(pkt.buf);
+    return -1;
+  }
+
+  kfree(pkt.buf);
+
+  return n;
 }
 
 // This code is lifted from FreeBSD's ping.c, and is copyright by the Regents
@@ -191,7 +305,49 @@ ip_rx(char *buf, int len)
   //
   // Your code here.
   //
-  
+
+  struct eth *eth = (struct eth *)buf;
+  struct ip *ip = (struct ip *)(eth + 1);
+
+  if(ip->ip_p == IPPROTO_UDP){
+    struct udp *udp = (struct udp *)(ip + 1);
+    int dport = ntohs(udp->dport);
+
+    acquire(&netlock);
+
+    int idx = -1;
+    for(int i = 0; i < NPORT; i++){
+      if(ports[i].port == dport){
+        idx = i;
+        break;
+      }
+    }
+
+    release(&netlock);
+
+    if(idx == -1){
+      kfree(buf);
+      return;
+    }
+
+    acquire(&ports[idx].lock);
+
+    if(ports[idx].count == 16){
+      release(&ports[idx].lock);
+      kfree(buf);
+      return;
+    }
+
+    ports[idx].queue[ports[idx].tail].buf = buf;
+    ports[idx].queue[ports[idx].tail].len = len;
+    ports[idx].tail = (ports[idx].tail + 1) % 16;
+    ports[idx].count++;
+
+    wakeup(&ports[idx]);
+    release(&ports[idx].lock);
+  } else {
+    kfree(buf);
+  }
 }
 
 //
