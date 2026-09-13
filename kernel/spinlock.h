@@ -16,5 +16,9 @@ struct spinlock {
 struct rwspinlock {
   // Replace this with your implementation.
   struct spinlock l;
+
+  int readers;
+  int waiting_writers;
+  int writer;
 };
 #endif
